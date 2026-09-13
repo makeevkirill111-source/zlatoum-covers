@@ -1,0 +1,50 @@
+# Сторож контент-завода ВНЕ сервера (13.09.2026).
+# Сервер (zlatoum-smm/deploy/deadman.py) раз в сутки кладёт сюда heartbeat.json.
+# Здесь раз в час смотрим его возраст: старше 26 часов или ok=false —
+# сообщение в Telegram (секреты ZLATOUM_SMM_BOT_TOKEN, ZLATOUM_SMM_EDITOR_ID)
+# и красный прогон — о нём GitHub пишет владельцу письмом сам, без секретов.
+name: deadman
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Возраст пульса
+        id: pulse
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime as dt, json, pathlib
+          p = pathlib.Path("heartbeat.json")
+          if not p.exists():
+              print("stale=true"); print("why=heartbeat.json ещё не появился"); raise SystemExit
+          h = json.loads(p.read_text())
+          age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(h["ts"])).total_seconds() / 3600
+          stale = age > 26 or not h.get("ok", False)
+          why = " / ".join(str(h.get("text", ""))[:200].splitlines())
+          print(f"stale={str(stale).lower()}")
+          print(f"why=пульсу {age:.0f} ч, ok={h.get('ok')}. {why}")
+          PY
+      - name: Тревога в Telegram
+        if: ${{ steps.pulse.outputs.stale == 'true' && secrets.ZLATOUM_SMM_BOT_TOKEN != '' }}
+        env:
+          TOKEN: ${{ secrets.ZLATOUM_SMM_BOT_TOKEN }}
+          CHAT: ${{ secrets.ZLATOUM_SMM_EDITOR_ID }}
+          WHY: ${{ steps.pulse.outputs.why }}
+        run: |
+          curl -fsS -m 20 "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT" \
+            --data-urlencode "text=🚨 Контент-завод молчит: $WHY"
+      - name: Красный прогон — письмо от GitHub
+        if: ${{ steps.pulse.outputs.stale == 'true' }}
+        env:
+          WHY: ${{ steps.pulse.outputs.why }}
+        run: |
+          echo "::error::$WHY"
+          exit 1
