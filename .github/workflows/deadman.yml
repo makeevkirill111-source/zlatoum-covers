@@ -14,6 +14,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Секреты — в env джоба: в условии шага контекст secrets недоступен, env — доступен.
+    env:
+      TOKEN: ${{ secrets.ZLATOUM_SMM_BOT_TOKEN }}
+      CHAT: ${{ secrets.ZLATOUM_SMM_EDITOR_ID }}
     steps:
       - uses: actions/checkout@v4
       - name: Возраст пульса
@@ -32,17 +36,15 @@ jobs:
           print(f"why=пульсу {age:.0f} ч, ok={h.get('ok')}. {why}")
           PY
       - name: Тревога в Telegram
-        if: ${{ steps.pulse.outputs.stale == 'true' && secrets.ZLATOUM_SMM_BOT_TOKEN != '' }}
+        if: steps.pulse.outputs.stale == 'true' && env.TOKEN != ''
         env:
-          TOKEN: ${{ secrets.ZLATOUM_SMM_BOT_TOKEN }}
-          CHAT: ${{ secrets.ZLATOUM_SMM_EDITOR_ID }}
           WHY: ${{ steps.pulse.outputs.why }}
         run: |
           curl -fsS -m 20 "https://api.telegram.org/bot$TOKEN/sendMessage" \
             --data-urlencode "chat_id=$CHAT" \
             --data-urlencode "text=🚨 Контент-завод молчит: $WHY"
       - name: Красный прогон — письмо от GitHub
-        if: ${{ steps.pulse.outputs.stale == 'true' }}
+        if: steps.pulse.outputs.stale == 'true'
         env:
           WHY: ${{ steps.pulse.outputs.why }}
         run: |
