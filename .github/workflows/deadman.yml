@@ -1,8 +1,18 @@
-# Сторож контент-завода ВНЕ сервера (13.09.2026).
+# Сторож контент-завода ВНЕ сервера (13.09.2026, дедуп и Штаб — 04.10.2026).
 # Сервер (zlatoum-smm/deploy/deadman.py) раз в сутки кладёт сюда heartbeat.json.
-# Здесь раз в час смотрим его возраст: старше 26 часов или ok=false —
-# сообщение в Telegram (секреты ZLATOUM_SMM_BOT_TOKEN, ZLATOUM_SMM_EDITOR_ID)
-# и красный прогон — о нём GitHub пишет владельцу письмом сам, без секретов.
+# Здесь раз в час смотрим его возраст: старше 26 часов или ok=false — тревога.
+# Логика и тесты — .github/deadman.py, tests/test_deadman.py.
+#
+# Тревога уходит в тему «smm» Штаба (секреты HUB_BOT_TOKEN, HUB_CHAT_ID, HUB_TOPIC_SMM), а если
+# Штаб не принял или его секретов нет — личным сообщением SMM-ботом (ZLATOUM_SMM_BOT_TOKEN,
+# ZLATOUM_SMM_EDITOR_ID). Первая — в первом запуске после беды, дальше раз в 12 часов, пока пульс
+# не оживёт: время последней тревоги держит кэш Actions (ключ deadman-alert-<номер запуска>).
+# Запуск, в котором тревога ушла (или не смогла уйти), красный — об этом GitHub пишет владельцу
+# письмом сам, без секретов; запуски «беда та же, но тревога уже была» зелёные.
+#
+# Проверка: ветка-песочница с подложенным старым heartbeat.json → Actions → deadman → Run workflow
+# на этой ветке → ровно одно сообщение; второй запуск в тот же час молчит. Кэш ветки-песочницы
+# от кэша main отдельный, боевое время тревоги проба не сдвинет.
 name: deadman
 
 on:
@@ -10,43 +20,41 @@ on:
     - cron: "17 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: deadman
+
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Секреты — в env джоба: в условии шага контекст secrets недоступен, env — доступен.
-    env:
-      TOKEN: ${{ secrets.ZLATOUM_SMM_BOT_TOKEN }}
-      CHAT: ${{ secrets.ZLATOUM_SMM_EDITOR_ID }}
     steps:
       - uses: actions/checkout@v4
+      - name: Когда била последняя тревога
+        uses: actions/cache/restore@v4
+        with:
+          path: .deadman
+          # Заведомо несуществующий ключ: нужен только поиск по restore-keys — самый свежий кэш
+          # с этим началом имени (его время и есть «последняя тревога»).
+          key: deadman-alert-none
+          restore-keys: deadman-alert-
       - name: Возраст пульса
-        id: pulse
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import datetime as dt, json, pathlib
-          p = pathlib.Path("heartbeat.json")
-          if not p.exists():
-              print("stale=true"); print("why=heartbeat.json ещё не появился"); raise SystemExit
-          h = json.loads(p.read_text())
-          age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(h["ts"])).total_seconds() / 3600
-          stale = age > 26 or not h.get("ok", False)
-          why = " / ".join(str(h.get("text", ""))[:200].splitlines())
-          print(f"stale={str(stale).lower()}")
-          print(f"why=пульсу {age:.0f} ч, ok={h.get('ok')}. {why}")
-          PY
-      - name: Тревога в Telegram
-        if: steps.pulse.outputs.stale == 'true' && env.TOKEN != ''
+        id: check
         env:
-          WHY: ${{ steps.pulse.outputs.why }}
-        run: |
-          curl -fsS -m 20 "https://api.telegram.org/bot$TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$CHAT" \
-            --data-urlencode "text=🚨 Контент-завод молчит: $WHY"
+          HUB_BOT_TOKEN: ${{ secrets.HUB_BOT_TOKEN }}
+          HUB_CHAT_ID: ${{ secrets.HUB_CHAT_ID }}
+          HUB_TOPIC_SMM: ${{ secrets.HUB_TOPIC_SMM }}
+          ZLATOUM_SMM_BOT_TOKEN: ${{ secrets.ZLATOUM_SMM_BOT_TOKEN }}
+          ZLATOUM_SMM_EDITOR_ID: ${{ secrets.ZLATOUM_SMM_EDITOR_ID }}
+        run: python3 .github/deadman.py
+      - name: Запомнить тревогу
+        if: steps.check.outputs.state == 'alerted'
+        uses: actions/cache/save@v4
+        with:
+          path: .deadman
+          key: deadman-alert-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Красный прогон — письмо от GitHub
-        if: steps.pulse.outputs.stale == 'true'
-        env:
-          WHY: ${{ steps.pulse.outputs.why }}
-        run: |
-          echo "::error::$WHY"
-          exit 1
+        if: steps.check.outputs.state == 'alerted' || steps.check.outputs.state == 'failed'
+        run: exit 1
