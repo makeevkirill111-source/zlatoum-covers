@@ -1,5 +1,5 @@
 {
- "ts": "2026-11-04T04:30:02+00:00",
+ "ts": "2026-11-05T04:30:01+00:00",
  "ok": true,
- "text": "📋 Сборка постов 2026-11-04: отработала в 03:30:39, результат success.\nОчередь: approved 32, needs_owner 4, pending 1, rejected 270, sent 61."
+ "text": "📋 Сборка постов 2026-11-05: отработала в 03:30:56, результат success.\nОчередь: approved 29, needs_owner 4, pending 1, rejected 270, sending 1, sent 63."
 }
